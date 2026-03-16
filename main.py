@@ -11,7 +11,6 @@ from enum import StrEnum
 
 from models.document import Document
 from models.upd import UPDDocument, parse_upd_xml
-from models.gs1 import parse_gs1
 
 API_URL_BASE = "https://online.sbis.ru"
 AUTH_API_URL = API_URL_BASE + "/auth/service/"
@@ -135,8 +134,9 @@ def main():
 
         for doc in docs:
             upd = fetch_upd_document(doc.zip_link, mgr.session)
+            
             for product in upd.products:
-                print(product.name)
+                print(product.name, product.article)
 
 
 if __name__ == "__main__":

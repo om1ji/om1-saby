@@ -1,73 +1,69 @@
-# Om1-Saby - обёртка над Saby API
+# Om1-Saby — обёртка над Saby API
 
-Saby (ex. СБИС) - ЭДО
+Saby (ex. СБИС) — система ЭДО. Обёртка умеет читать входящие документы, парсить УПД и извлекать коды маркировки (КМ) в формате GS1 DataMatrix. Написана для автоматизации оприходования маркированных товаров.
 
-### Функционал
-
-На данный момент обёртка умеет читать документы и парсить УПД. Из УПД парсить коды маркировки (КМ) в формате GS1 DataMatrix. Обёртка была написана с целью автоматизировать дальнешее оприходование маркированных товаров.
-
-### Начало работы
-
-В файле `.env` добавить следующие значения:
-
-- `LOGIN` - логин от учётной записи Saby
-- `PASSWORD` - пароль от учётной записи Saby
-
-### Запуск
-
-Запускать командой: 
+## Установка
 ```bash
+uv sync
+# или
+pip install -r requirements.txt
+```
+
+## Начало работы
+
+Создайте файл `.env` со следующими значениями:
+```env
+LOGIN=ваш_логин
+PASSWORD=ваш_пароль
+```
+
+## Запуск
+```bash
+uv run main.py
+# или
 python3 main.py
 ```
 
-или 
-
-```bash
-uv run main.py
+## Структура проекта
+```
+├── main.py
+├── models/
+│   ├── document.py   # Модели документов СБИС
+│   └── upd.py        # Модели и парсер УПД (XML)
+└── .env
 ```
 
-### Основные методы
-
+## Пример использования
 ```python
-def main():
-    login = os.getenv("LOGIN")
-    password = os.getenv("PASSWORD")
+with RequestsManager(login, password) as mgr:
+    docs = DocumentsController.get_documents(
+        date_from=datetime(2026, 3, 15),
+        date_to=datetime(2026, 3, 16),
+        items_per_page=50,
+        requests_manager=mgr,
+        doc_type=DocumentType.INCOMING,
+    )
 
-    # Менеджер запросов на API
-    with RequestsManager(login, password) as mgr:
-        date_from = datetime(2026, 3, 15)
-        date_to = datetime(2026, 3, 16)
+    for doc in docs:
+        upd = fetch_upd_document(doc.zip_link, mgr.session)
 
-        # Обязательно выбрать тип документа из enum DocumentType
-        doc_type = DocumentType.INCOMING
-
-        # Собрать все документы
-        docs = DocumentsController.get_documents(date_from, date_to, 50, mgr, doc_type=doc_type)
-
-        for doc in docs:
-            upd = fetch_upd_document(doc.zip_link, mgr.session)
-
-            # В каждом УПД отобразить названия товаров
-            for product in upd.products:
-                print(product.name)
+        for product in upd.products:
+            print(product.name, product.marking_code)
 ```
 
-### Типы документов
+## Типы документов
 
-```python
-class DocumentType(StrEnum):
-    INCOMING = "ДокОтгрВх"        # Приход (Поступление)
-    OUTGOING = "ДокОтгрИсх"       # Расход (Реализация)
-    INVOICE_IN = "ФактураВх"       # Счет-фактура входящий
-    INVOICE_OUT = "ФактураИсх"     # Счет-фактура исходящий
-    ORDER_IN = "ЗаказВх"           # Заказ входящий
-    ORDER_OUT = "ЗаказИсх"         # Заказ исходящий
-    CONTRACT_IN = "ДоговорВх"      # Договор входящий
-    CONTRACT_OUT = "ДоговорИсх"    # Договор исходящий
-    BILL_IN = "СчетВх"             # Счет входящий
-    BILL_OUT = "СчетИсх"           # Счет исходящий
-    RETURN_IN = "ReturnIn"         # Возврат от покупателя
-    RETURN_OUT = "ReturnOut"       # Возврат поставщику
-    CORRECTION_IN = "CorrIn"       # Корректировка входящая
-    CORRECTION_OUT = "CorrOut"     # Корректировка исходящая
-```
+| Константа | Значение | Описание |
+|---|---|---|
+| `DocumentType.INCOMING` | `ДокОтгрВх` | Приход (Поступление) |
+| `DocumentType.OUTGOING` | `ДокОтгрИсх` | Расход (Реализация) |
+| `DocumentType.INVOICE_IN` | `ФактураВх` | Счёт-фактура входящий |
+| `DocumentType.INVOICE_OUT` | `ФактураИсх` | Счёт-фактура исходящий |
+| `DocumentType.ORDER_IN` | `ЗаказВх` | Заказ входящий |
+| `DocumentType.ORDER_OUT` | `ЗаказИсх` | Заказ исходящий |
+| `DocumentType.BILL_IN` | `СчетВх` | Счёт входящий |
+| `DocumentType.BILL_OUT` | `СчетИсх` | Счёт исходящий |
+| `DocumentType.RETURN_IN` | `ReturnIn` | Возврат от покупателя |
+| `DocumentType.RETURN_OUT` | `ReturnOut` | Возврат поставщику |
+| `DocumentType.CORRECTION_IN` | `CorrIn` | Корректировка входящая |
+| `DocumentType.CORRECTION_OUT` | `CorrOut` | Корректировка исходящая |
