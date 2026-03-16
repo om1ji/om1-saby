@@ -5,6 +5,8 @@ import xml.etree.ElementTree as ET
 
 from dataclasses import dataclass
 from typing import Optional
+import re
+
 
 @dataclass
 class GS1Code:
@@ -17,7 +19,23 @@ class GS1Code:
     def short_code(self) -> str:
         """Код в формате СБИС/ЧЗ: первые 31 символ без разделителей"""
         return f"01{self.gtin}21{self.serial}"
+    
+    @property
+    def ean13(self) -> str | None:
+        """Конвертирует GTIN-14 в EAN-13, убирая ведущий ноль"""
+        if len(self.gtin) == 14 and self.gtin.startswith("0"):
+            return self.gtin[1:]
+        return None
+    
 
+@dataclass
+class MotorOilEntry:
+    doc_number: str
+    article: str | None
+    name: str
+    marking_code: GS1Code | None
+
+    
 def parse_gs1(raw: str) -> GS1Code:
     # Убираем завершающие \r
     data = raw.rstrip("\r")
@@ -101,80 +119,94 @@ class UPDDocument(pydantic.BaseModel):
     function: str | None # СЧФ / ДОП / СЧФДОП
 
 
-def parse_upd_xml(root: ET.Element) -> UPDDocument:
+def parse_upd_xml(root: ET.Element) -> UPDDocument | None:
     doc = root.find("Документ")
-    sf = doc.find("СвСчФакт")
-
-    # Продавец
-    seller_el = sf.find("СвПрод/ИдСв/СвЮЛУч")
-    seller = LegalEntity(
-        name=seller_el.get("НаимОрг"),
-        inn=seller_el.get("ИННЮЛ"),
-        kpp=seller_el.get("КПП"),
-    )
-
-    # Покупатель (ИП)
-    buyer_ip = sf.find("СвПокуп/ИдСв/СвИП")
-    buyer_fio = buyer_ip.find("ФИО")
-    buyer = IndividualEntrepreneur(
-        inn=buyer_ip.get("ИННФЛ"),
-        full_name=FullName(
-            last_name=buyer_fio.get("Фамилия"),
-            first_name=buyer_fio.get("Имя"),
-            middle_name=buyer_fio.get("Отчество"),
-        ),
-    )
-
-    # Товары
-    products = []
-    for item in doc.findall("ТаблСчФакт/СведТов"):
-        article = manufacturer = None
-        
-        if "||" in item.get("НаимТов"):
-            article, name, manufacturer = item.get("НаимТов").split("||")
-            article = article.strip()
-            name = name.strip()
-            manufacturer = manufacturer.strip()
-        else:
-            name = item.get("НаимТов")
-            
-        kiz_raw = item.find("ДопСведТов/НомСредИдентТов/КИЗ")
-        kiz = parse_gs1(kiz_raw.text) if kiz_raw is not None and kiz_raw.text else None
-        
-        vat_el = item.find("СумНал/СумНал")
-        
-        products.append(UPDProduct(
-            row_number=int(item.get("НомСтр")),
-            name=name,
-            article=article,
-            manufacturer=manufacturer,
-            unit_code=item.get("ОКЕИ_Тов"),
-            unit_name=item.get("НаимЕдИзм"),
-            quantity=float(item.get("КолТов") or 0),
-            price=item.get("ЦенаТов") or None,
-            sum_without_vat=float(item.get("СтТовБезНДС")),
-            vat_rate=item.get("НалСт"),
-            sum_with_vat=float(item.get("СтТовУчНал")),
-            vat_sum=vat_el.text if vat_el is not None else None,
-            marking_code=kiz if kiz is not None else None,
-        ))
-
-    # Итоги
-    totals_el = doc.find("ТаблСчФакт/ВсегоОпл")
-    vat_total_el = totals_el.find("СумНалВсего/СумНал")
-    totals = UPDTotals(
-        sum_without_vat=totals_el.get("СтТовБезНДСВсего"),
-        sum_with_vat=totals_el.get("СтТовУчНалВсего"),
-        vat_sum=vat_total_el.text,
-    )
-
-    return UPDDocument(
-        number=sf.get("НомерДок"),
-        date=datetime.strptime(sf.get("ДатаДок"), "%d.%m.%Y"),
-        seller=seller,
-        buyer=buyer,
-        products=products,
-        totals=totals,
-        function=doc.get("Функция"),
-    )
     
+    if doc is None:
+        return None
+    
+    # Проверяем что это УПД, а не служебный документ
+    if doc.find("ТаблСчФакт") is None:
+        return None
+    
+    try:
+        doc = root.find("Документ")
+        sf = doc.find("СвСчФакт")
+
+        # Продавец
+        seller_el = sf.find("СвПрод/ИдСв/СвЮЛУч")
+        seller = LegalEntity(
+            name=seller_el.get("НаимОрг"),
+            inn=seller_el.get("ИННЮЛ"),
+            kpp=seller_el.get("КПП"),
+        )
+
+        # Покупатель (ИП)
+        buyer_ip = sf.find("СвПокуп/ИдСв/СвИП")
+        buyer_fio = buyer_ip.find("ФИО")
+        buyer = IndividualEntrepreneur(
+            inn=buyer_ip.get("ИННФЛ"),
+            full_name=FullName(
+                last_name=buyer_fio.get("Фамилия"),
+                first_name=buyer_fio.get("Имя"),
+                middle_name=buyer_fio.get("Отчество"),
+            ),
+        )
+
+        # Товары
+        products = []
+        for item in doc.findall("ТаблСчФакт/СведТов"):
+            raw_name = item.get("НаимТов", "").strip()
+            manufacturer = None
+
+            if "||" in raw_name:
+                parts = raw_name.split("||")
+                name = parts[1].strip()
+                manufacturer = parts[2].strip() if len(parts) > 2 else None
+            else:
+                name = raw_name
+
+            dop_sved = item.find("ДопСведТов")
+            article = dop_sved.get("КодТов") if dop_sved is not None else None
+
+            kiz_raw = item.find("ДопСведТов/НомСредИдентТов/КИЗ")
+            kiz = parse_gs1(kiz_raw.text) if kiz_raw is not None and kiz_raw.text else None
+
+            vat_el = item.find("СумНал/СумНал")
+
+            products.append(UPDProduct(
+                row_number=int(item.get("НомСтр")),
+                name=name,
+                article=article,
+                manufacturer=manufacturer,
+                unit_code=item.get("ОКЕИ_Тов"),
+                unit_name=item.get("НаимЕдИзм"),
+                quantity=float(item.get("КолТов") or 0),
+                price=item.get("ЦенаТов") or None,
+                sum_without_vat=float(item.get("СтТовБезНДС")),
+                vat_rate=item.get("НалСт"),
+                sum_with_vat=float(item.get("СтТовУчНал")),
+                vat_sum=vat_el.text if vat_el is not None else None,
+                marking_code=kiz if kiz is not None else None,
+            ))
+
+        # Итоги
+        totals_el = doc.find("ТаблСчФакт/ВсегоОпл")
+        vat_total_el = totals_el.find("СумНалВсего/СумНал")
+        totals = UPDTotals(
+            sum_without_vat=totals_el.get("СтТовБезНДСВсего"),
+            sum_with_vat=totals_el.get("СтТовУчНалВсего"),
+            vat_sum=vat_total_el.text,
+        )
+
+        return UPDDocument(
+            number=sf.get("НомерДок"),
+            date=datetime.strptime(sf.get("ДатаДок"), "%d.%m.%Y"),
+            seller=seller,
+            buyer=buyer,
+            products=products,
+            totals=totals,
+            function=doc.get("Функция"),
+        )
+    except AttributeError:
+        print(ET.tostring(root, encoding="unicode"))

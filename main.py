@@ -8,6 +8,7 @@ from os import getenv
 import logging
 from dotenv import load_dotenv
 from enum import StrEnum
+from models.upd import MotorOilEntry
 
 from models.document import Document
 from models.upd import UPDDocument, parse_upd_xml
@@ -120,6 +121,35 @@ class DocumentsController:
         raw_docs = response["result"]["Документ"]
         return [Document.model_validate(doc) for doc in raw_docs]
 
+def get_motor_oil_docs(manager: RequestsManager, date_from: datetime, date_to: datetime = None) -> list[MotorOilEntry]:
+    if date_to is None:
+        date_to = datetime.now()
+        
+    docs = DocumentsController.get_documents(date_from, date_to, 50, manager, doc_type=DocumentType.INCOMING)
+    result = []
+
+    for doc in docs:
+        try:
+            upd = fetch_upd_document(doc.zip_link, manager.session)
+
+            if upd is None:
+                logger.warning(f"УПД не удалось распарсить: {doc.zip_link}")
+                continue
+
+            for product in upd.products:
+                if product.name and "масло" in product.name.lower():
+                    result.append(MotorOilEntry(
+                        doc_number=doc.number,
+                        article=product.article,
+                        name=product.name,
+                        marking_code=product.marking_code,
+                    ))
+
+        except Exception:
+            logger.exception("Ошибка чтения УПД из XML-документа")
+
+    return result
+
 def main():
     load_dotenv()
 
@@ -127,17 +157,20 @@ def main():
     password = getenv("PASSWORD")
 
     with RequestsManager(login, password) as mgr:
-        date_from = datetime(2026, 3, 15)
-        date_to = datetime(2026, 3, 16)
-        doc_type = DocumentType.INCOMING
-        docs = DocumentsController.get_documents(date_from, date_to, 50, mgr, doc_type=doc_type)
-
-        for doc in docs:
-            upd = fetch_upd_document(doc.zip_link, mgr.session)
-            
-            for product in upd.products:
-                print(product.name, product.article)
-
+        date_from = datetime(2026, 3, 1)
+        
+        oil_docs = get_motor_oil_docs(mgr, date_from)
+        
+        print(oil_docs)
+        
+""" MotorOilEntry(doc_number='УАК1671.../1',
+            article='...',
+            name='Масло моторное ...',
+            marking_code=GS1Code(gtin='...',
+                                serial='...',
+                                session_key=None,
+                                signature=None)),
+"""
 
 if __name__ == "__main__":
     main()
