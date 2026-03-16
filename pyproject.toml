@@ -1,0 +1,11 @@
+[project]
+name = "om1-saby"
+version = "0.1.0"
+description = "Wrapper for Saby API (СБИС)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.2",
+    "requests>=2.32.5",
+]
