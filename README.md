@@ -35,21 +35,28 @@ python3 main.py
 
 ## Пример использования
 ```python
-with RequestsManager(login, password) as mgr:
-    docs = DocumentsController.get_documents(
-        date_from=datetime(2026, 3, 15),
-        date_to=datetime(2026, 3, 16),
-        items_per_page=50,
-        requests_manager=mgr,
-        doc_type=DocumentType.INCOMING,
-    )
+def main():
+    login = getenv("LOGIN")
+    password = getenv("PASSWORD")
 
-    for doc in docs:
-        upd = fetch_upd_document(doc.zip_link, mgr.session)
+    with RequestsManager(login, password) as mgr:
+        date_from = datetime(2026, 3, 1)
+        
+        oil_docs = get_motor_oil_docs(mgr, date_from)
+        
+        print(oil_docs)
 
-        for product in upd.products:
-            print(product.name, product.marking_code)
+# Экземпляр из oil_docs     
+MotorOilEntry(doc_number='УАК1671.../1',
+        article='...',
+        name='Масло моторное ...',
+        marking_code=GS1Code(gtin='...',
+                            serial='...',
+                            session_key=None,
+                            signature=None))
 ```
+
+
 
 ## Типы документов
 
