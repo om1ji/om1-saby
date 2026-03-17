@@ -1,11 +1,15 @@
-import pydantic
+import logging
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
-import xml.etree.ElementTree as ET
+import requests
+import io
+import zipfile
 
-from dataclasses import dataclass
-from typing import Optional
-import re
+import pydantic
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -19,14 +23,14 @@ class GS1Code:
     def short_code(self) -> str:
         """Код в формате СБИС/ЧЗ: первые 31 символ без разделителей"""
         return f"01{self.gtin}21{self.serial}"
-    
+
     @property
     def ean13(self) -> str | None:
         """Конвертирует GTIN-14 в EAN-13, убирая ведущий ноль"""
         if len(self.gtin) == 14 and self.gtin.startswith("0"):
             return self.gtin[1:]
         return None
-    
+
 
 @dataclass
 class MotorOilEntry:
@@ -35,7 +39,7 @@ class MotorOilEntry:
     name: str
     marking_code: GS1Code | None
 
-    
+
 def parse_gs1(raw: str) -> GS1Code:
     # Убираем завершающие \r
     data = raw.rstrip("\r")
@@ -62,6 +66,7 @@ def parse_gs1(raw: str) -> GS1Code:
         session_key=result.get("91"),
         signature=result.get("92"),
     )
+
 
 class FullName(pydantic.BaseModel):
     last_name: str | None
@@ -99,8 +104,8 @@ class UPDProduct(pydantic.BaseModel):
     sum_without_vat: float | None
     vat_rate: str | None
     sum_with_vat: float | None
-    vat_sum: Optional[float] = None
-    marking_code: Optional[str] | GS1Code = None  # КИЗ
+    vat_sum: float | None = None
+    marking_code: str | GS1Code | None = None  # КИЗ
 
 
 class UPDTotals(pydantic.BaseModel):
@@ -116,21 +121,22 @@ class UPDDocument(pydantic.BaseModel):
     buyer: IndividualEntrepreneur | None
     products: list[UPDProduct] | None
     totals: UPDTotals | None
-    function: str | None # СЧФ / ДОП / СЧФДОП
+    function: str | None  # СЧФ / ДОП / СЧФДОП
 
 
 def parse_upd_xml(root: ET.Element) -> UPDDocument | None:
     doc = root.find("Документ")
-    
+
     if doc is None:
+        logging.debug("Нет тега <Документ>")
         return None
-    
+
     # Проверяем что это УПД, а не служебный документ
     if doc.find("ТаблСчФакт") is None:
+        logging.debug("Нет тега <ТаблСчФакт>")
         return None
-    
+
     try:
-        doc = root.find("Документ")
         sf = doc.find("СвСчФакт")
 
         # Продавец
@@ -187,7 +193,7 @@ def parse_upd_xml(root: ET.Element) -> UPDDocument | None:
                 vat_rate=item.get("НалСт"),
                 sum_with_vat=float(item.get("СтТовУчНал")),
                 vat_sum=vat_el.text if vat_el is not None else None,
-                marking_code=kiz if kiz is not None else None,
+                marking_code=kiz,
             ))
 
         # Итоги
@@ -209,4 +215,17 @@ def parse_upd_xml(root: ET.Element) -> UPDDocument | None:
             function=doc.get("Функция"),
         )
     except AttributeError:
-        print(ET.tostring(root, encoding="unicode"))
+        logger.exception("Ошибка парсинга УПД XML:\n%s", ET.tostring(root, encoding="unicode"))
+        return None
+
+
+def fetch_upd_document(zip_url: str, session_id: str) -> UPDDocument | None:
+    response = requests.get(zip_url, headers={"X-SBISSessionID": session_id})
+
+    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        xml_filename = next(name for name in z.namelist() if name.endswith(".xml"))
+        xml_bytes = z.read(xml_filename)
+
+    root: ET.Element = ET.fromstring(xml_bytes.decode("windows-1251"))
+
+    return parse_upd_xml(root)

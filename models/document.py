@@ -2,8 +2,6 @@ import pydantic
 from datetime import datetime
 from typing import Optional
 
-def to_date(value: str) -> datetime:
-    return datetime.strptime(value, "%d.%m.%Y")
 
 class MarkingState(pydantic.BaseModel):
     operation_code: str = pydantic.Field(alias="КодОперации")
@@ -18,16 +16,19 @@ class DocumentExtension(pydantic.BaseModel):
     marking: Optional[str] = pydantic.Field(alias="Маркировка", default=None)
     plus_mark: str = pydantic.Field(alias="ОтметкаПлюсом")
     marking_state: Optional[MarkingState] = pydantic.Field(alias="СостояниеМарк", default=None)
-    
+
+
 class DocumentState(pydantic.BaseModel):
     code: str = pydantic.Field(alias="Код")
     name: str = pydantic.Field(alias="Название")
     description: str = pydantic.Field(alias="Описание")
     comment: str = pydantic.Field(alias="Примечание")
 
+
 class DocumentReglament(pydantic.BaseModel):
     id: str = pydantic.Field(alias="Идентификатор")
     name: str = pydantic.Field(alias="Название")
+
 
 class LegalEntity(pydantic.BaseModel):
     inn: str = pydantic.Field(alias="ИНН")
@@ -36,9 +37,11 @@ class LegalEntity(pydantic.BaseModel):
     full_name: str = pydantic.Field(alias="НазваниеПолное")
     address: str = pydantic.Field(alias="АдресЮридический")
 
+
 class Counterparty(pydantic.BaseModel):
     type: str = pydantic.Field(alias="Тип")
     legal_entity: Optional[LegalEntity] = pydantic.Field(alias="СвЮЛ", default=None)
+
 
 class Document(pydantic.BaseModel):
     id: str = pydantic.Field(alias="Идентификатор")

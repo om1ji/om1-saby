@@ -1,62 +1,103 @@
-# Om1-Saby — обёртка над Saby API
+# saby-api-wrapper
 
-Saby (ex. СБИС) — система ЭДО. Обёртка умеет читать входящие документы, парсить УПД и извлекать коды маркировки (КМ) в формате GS1 DataMatrix. Написана для автоматизации оприходования маркированных товаров.
+> Python-обёртка над [Saby (СБИС)](https://saby.ru/) API для работы с ЭДО: получение документов, парсинг УПД и извлечение кодов маркировки GS1 DataMatrix.
+
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+---
+
+## Возможности
+
+- Аутентификация и управление сессией через Saby API (JSONRPC)
+- Получение списка документов с фильтрацией по типу и периоду
+- Скачивание и парсинг УПД из ZIP-архивов (XML, кодировка Windows-1251)
+- Декодирование кодов маркировки в формате GS1 DataMatrix (AI 01/21/91/92)
+- Конвертация GTIN-14 → EAN-13
+- Pydantic-модели для всех структур данных
+
+## Требования
+
+- Python 3.10+
+- Аккаунт в системе Saby (СБИС) с доступом к API
 
 ## Установка
+
 ```bash
+# Через uv (рекомендуется)
 uv sync
-# или
+
+# Или через pip
 pip install -r requirements.txt
 ```
 
-## Начало работы
+## Конфигурация
 
-Создайте файл `.env` со следующими значениями:
+Создайте файл `.env` в корне проекта:
+
 ```env
 LOGIN=ваш_логин
 PASSWORD=ваш_пароль
 ```
 
-## Запуск
+## Использование
+
+### Быстрый старт
+
 ```bash
 uv run main.py
 # или
-python3 main.py
+python main.py
+```
+
+### В коде
+
+```python
+from datetime import datetime
+from main import RequestsManager, DocumentsController, DocumentType, get_motor_oil_docs
+
+with RequestsManager(login, password) as mgr:
+    # Получить все входящие документы за март 2026
+    docs = DocumentsController.get_documents(
+        date_from=datetime(2026, 3, 1),
+        date_to=datetime(2026, 3, 31),
+        items_per_page=50,
+        requests_manager=mgr,
+        doc_type=DocumentType.INCOMING,
+    )
+
+    # Извлечь коды маркировки моторных масел
+    oil_entries = get_motor_oil_docs(mgr, date_from=datetime(2026, 3, 1))
+    for entry in oil_entries:
+        print(entry.name, entry.marking_code.short_code)
+```
+
+### Пример результата `get_motor_oil_docs`
+
+```python
+MotorOilEntry(
+    doc_number='УАК1671.../1',
+    article='12345',
+    name='Масло моторное Castrol EDGE 5W-30',
+    marking_code=GS1Code(
+        gtin='04607085550123',
+        serial='ABCxyz123',
+        session_key='abc123',
+        signature=None,
+    )
+)
 ```
 
 ## Структура проекта
+
 ```
-├── main.py
+├── main.py               # Точка входа, RequestsManager, DocumentsController
 ├── models/
-│   ├── document.py   # Модели документов СБИС
-│   └── upd.py        # Модели и парсер УПД (XML)
-└── .env
+│   ├── document.py       # Pydantic-модели документов СБИС
+│   └── upd.py            # Pydantic-модели и парсер УПД (XML), GS1Code
+├── requirements.txt
+└── .env                  # Не коммитить
 ```
-
-## Пример использования
-```python
-def main():
-    login = getenv("LOGIN")
-    password = getenv("PASSWORD")
-
-    with RequestsManager(login, password) as mgr:
-        date_from = datetime(2026, 3, 1)
-        
-        oil_docs = get_motor_oil_docs(mgr, date_from)
-        
-        print(oil_docs)
-
-# Экземпляр из oil_docs     
-MotorOilEntry(doc_number='УАК1671.../1',
-        article='...',
-        name='Масло моторное ...',
-        marking_code=GS1Code(gtin='...',
-                            serial='...',
-                            session_key=None,
-                            signature=None))
-```
-
-
 
 ## Типы документов
 
@@ -74,3 +115,27 @@ MotorOilEntry(doc_number='УАК1671.../1',
 | `DocumentType.RETURN_OUT` | `ReturnOut` | Возврат поставщику |
 | `DocumentType.CORRECTION_IN` | `CorrIn` | Корректировка входящая |
 | `DocumentType.CORRECTION_OUT` | `CorrOut` | Корректировка исходящая |
+
+## Структура `GS1Code`
+
+| Поле | AI | Описание |
+|---|---|---|
+| `gtin` | `01` | GTIN-14 товара |
+| `serial` | `21` | Серийный номер |
+| `session_key` | `91` | Ключ сессии (опционально) |
+| `signature` | `92` | Подпись (опционально) |
+| `.short_code` | — | Код в формате `01{gtin}21{serial}` |
+| `.ean13` | — | EAN-13 из GTIN-14 (убирает ведущий `0`) |
+
+## Вклад в проект
+
+Будем рады pull request'ам. Пожалуйста:
+
+1. Форкните репозиторий
+2. Создайте ветку: `git checkout -b feature/my-feature`
+3. Закоммитьте изменения: `git commit -m 'Add my feature'`
+4. Откройте Pull Request
+
+## Лицензия
+
+MIT

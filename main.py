@@ -1,36 +1,20 @@
-import requests
-import io
-import zipfile
-import xml.etree.ElementTree as ET
-from xml.etree.ElementTree import Element
+import logging
 from datetime import datetime
 from os import getenv
-import logging
+
+import requests
 from dotenv import load_dotenv
 from enum import StrEnum
-from models.upd import MotorOilEntry
 
 from models.document import Document
-from models.upd import UPDDocument, parse_upd_xml
+from models.upd import fetch_upd_document, UPDDocument
 
 API_URL_BASE = "https://online.sbis.ru"
 AUTH_API_URL = API_URL_BASE + "/auth/service/"
 API_URL = API_URL_BASE + "/service/?srv=1"
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("SABY Logger")
-
-
-def fetch_upd_document(zip_url: str, session_id: str) -> UPDDocument:
-    response = requests.get(zip_url, headers={"X-SBISSessionID": session_id})
-
-    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-        xml_filename = next(name for name in z.namelist() if name.endswith(".xml"))
-        xml_bytes = z.read(xml_filename)
-
-    root: Element = ET.fromstring(xml_bytes.decode("windows-1251"))
-    
-    return parse_upd_xml(root)
 
 
 class DocumentType(StrEnum):
@@ -102,53 +86,42 @@ class DocumentsController:
         date_to: datetime,
         items_per_page: int,
         requests_manager: RequestsManager,
-        doc_type: DocumentType = None,
+        doc_type: DocumentType | None = None,
     ) -> list[Document]:
+        if doc_type is None:
+            raise ValueError("Укажите doc_type для поиска")
+
         params = {
             "Фильтр": {
                 "ДатаС": date_from.strftime("%d.%m.%Y"),
                 "ДатаПо": date_to.strftime("%d.%m.%Y"),
+                "Тип": doc_type,
                 "Навигация": {"РазмерСтраницы": items_per_page},
             }
         }
-
-        if doc_type is not None:
-            params["Фильтр"]["Тип"] = doc_type
-        else:
-            raise ValueError("Укажите doc_type для поиска")
 
         response = requests_manager.request("СБИС.СписокДокументов", params)
         raw_docs = response["result"]["Документ"]
         return [Document.model_validate(doc) for doc in raw_docs]
 
-def get_motor_oil_docs(manager: RequestsManager, date_from: datetime, date_to: datetime = None) -> list[MotorOilEntry]:
-    if date_to is None:
-        date_to = datetime.now()
+    def get_incoming_documents(
+        date_from: datetime,
+        date_to: datetime,
+        items_per_page: int,
+        requests_manager: RequestsManager,
+        ) -> UPDDocument:
+        docs = DocumentsController.get_documents(date_from, date_to, items_per_page, requests_manager, DocumentType.INCOMING)
         
-    docs = DocumentsController.get_documents(date_from, date_to, 50, manager, doc_type=DocumentType.INCOMING)
-    result = []
+        result = []
+        
+        for doc in docs:
+            upd = fetch_upd_document(doc.zip_link, requests_manager._session) 
+            
+            if upd is not None:
+                result.append(upd)
+                
+        return result
 
-    for doc in docs:
-        try:
-            upd = fetch_upd_document(doc.zip_link, manager.session)
-
-            if upd is None:
-                logger.warning(f"УПД не удалось распарсить: {doc.zip_link}")
-                continue
-
-            for product in upd.products:
-                if product.name and "масло" in product.name.lower():
-                    result.append(MotorOilEntry(
-                        doc_number=doc.number,
-                        article=product.article,
-                        name=product.name,
-                        marking_code=product.marking_code,
-                    ))
-
-        except Exception:
-            logger.exception("Ошибка чтения УПД из XML-документа")
-
-    return result
 
 def main():
     load_dotenv()
@@ -157,20 +130,11 @@ def main():
     password = getenv("PASSWORD")
 
     with RequestsManager(login, password) as mgr:
-        date_from = datetime(2026, 3, 1)
+        date_from = datetime(2026, 3, 17)
         
-        oil_docs = get_motor_oil_docs(mgr, date_from)
-        
-        print(oil_docs)
-        
-""" MotorOilEntry(doc_number='УАК1671.../1',
-            article='...',
-            name='Масло моторное ...',
-            marking_code=GS1Code(gtin='...',
-                                serial='...',
-                                session_key=None,
-                                signature=None)),
-"""
+        docs = DocumentsController.get_incoming_documents(date_from, datetime.now(), 50, mgr)
+
+        print(docs)
 
 if __name__ == "__main__":
     main()
