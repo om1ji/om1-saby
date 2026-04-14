@@ -6,14 +6,14 @@ import requests
 from dotenv import load_dotenv
 from enum import StrEnum
 
-from models.document import Document
-from models.upd import fetch_upd_document, UPDDocument
+from saby.models.document import Document
+from saby.models.upd import fetch_upd_document, UPDDocument
 
 API_URL_BASE = "https://online.sbis.ru"
 AUTH_API_URL = API_URL_BASE + "/auth/service/"
 API_URL = API_URL_BASE + "/service/?srv=1"
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("SABY Logger")
 
 
@@ -45,7 +45,18 @@ class RequestsManager:
             "id": 0,
         }
         response = requests.post(AUTH_API_URL, json=params)
-        self._session = response.json()["result"]
+        response_json = response.json()
+
+        try:
+            if "error" in response_json:
+                logger.error(response_json["error"]["message"])    
+
+            self._session = response_json["result"]          
+
+        except KeyError:
+            logger.exception("Нет поля result при попытке авторизоваться")
+            
+            
         logger.debug(f"Залогинились. Session ID: {self._session}")
 
     def __enter__(self):
@@ -109,7 +120,7 @@ class DocumentsController:
         date_to: datetime,
         items_per_page: int,
         requests_manager: RequestsManager,
-        ) -> UPDDocument:
+        ) -> list[UPDDocument]:
         docs = DocumentsController.get_documents(date_from, date_to, items_per_page, requests_manager, DocumentType.INCOMING)
         
         result = []
@@ -134,7 +145,8 @@ def main():
         
         docs = DocumentsController.get_incoming_documents(date_from, datetime.now(), 50, mgr)
 
-        print(docs)
+        for doc in docs:
+            print(doc.model_dump_json())
 
 if __name__ == "__main__":
     main()

@@ -88,10 +88,33 @@ MotorOilEntry(
 )
 ```
 
+## Интеграция с sk_auto1 (ЭДО СБИС → АвтоДилер)
+
+Модуль используется в проекте **sk_auto1** как источник данных электронного документооборота (ЭДО) СБИС для автоматического обновления номенклатуры в ERP АвтоДилер.
+
+**Поток данных:**
+```
+[ЭДО СБИС] → sync.py (каждые 15 мин) → [MongoDB: saby.documents]
+                                                  ↓
+                          scripts/autoprihod/utils/saby_import.py
+                                                  ↓
+                              Firebird (SHOP_NOMENCLATURE, DOCUMENT_IN)
+```
+
+**`sync.py`** — забирает входящие УПД за текущий день, сохраняет в MongoDB. Запускается через Планировщик задач Windows каждые 15 минут. Дедупликация по `saby_id` — повторная загрузка одного документа безопасна.
+
+**`db.py`** — CRUD для MongoDB: сохранение документов, получение необработанных, отметка об обработке.
+
+**`saby_import.py`** (в `scripts/autoprihod/utils/`) — читает необработанные документы из MongoDB и:
+- Создаёт/находит номенклатуру в `SHOP_NOMENCLATURE`
+- Для товаров с кодом маркировки GS1 DataMatrix записывает EAN-13 в `BAR_CODE` и проставляет признак маркировки
+
 ## Структура проекта
 
 ```
-├── main.py               # Точка входа, RequestsManager, DocumentsController
+├── main.py               # RequestsManager (авторизация), DocumentsController
+├── sync.py               # Polling-сервис: Saby → MongoDB
+├── db.py                 # CRUD для MongoDB (коллекция documents)
 ├── models/
 │   ├── document.py       # Pydantic-модели документов СБИС
 │   └── upd.py            # Pydantic-модели и парсер УПД (XML), GS1Code
